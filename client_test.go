@@ -2,6 +2,7 @@ package mcclient
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -54,7 +55,7 @@ func TestVarInt(t *testing.T) {
 
 	string1 := "This is a test string"
 	mc1 := NewMcstring(string1)
-	varlen, _ := mc1.length.ToInt()
+	varlen, _ := mc1.Length.ToInt()
 	if varlen != int32(len(string1)) {
 		t.Errorf(`expected length %d, got %d for test string "%s"`, len(string1), varlen, string1)
 	}
@@ -63,4 +64,13 @@ func TestVarInt(t *testing.T) {
 	if string1 != string2 {
 		t.Errorf(`mangled strings: "%s" should match "%s"`, string1, string2)
 	}
+
+	// Test Ping
+	url := "18.132.35.45:25565"
+	res, err := Ping(url)
+	if err != nil {
+		t.Errorf("pinging %s: %v", url, err)
+	}
+	fmt.Println(res)
+
 }
