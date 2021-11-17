@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-func TestreadVarInt() {
-
-}
-
 func TestwriteVarInt() {
 
 }
@@ -34,6 +30,12 @@ func TestVarInt(t *testing.T) {
 
 		// Test constructor of Varint given fixed value
 		v := NewVarint(row.fixed)
+		if !bytes.Equal(v.value, row.variable) {
+			t.Errorf("expected %x for NewVarint but got %x for %d", row.variable, v.value, row.fixed)
+		}
+
+		// Test constructor of Varint given byte stream
+		v = ReadVarint(bytes.NewReader(row.variable))
 		if !bytes.Equal(v.value, row.variable) {
 			t.Errorf("expected %x for NewVarint but got %x for %d", row.variable, v.value, row.fixed)
 		}
@@ -72,6 +74,6 @@ func TestVarInt(t *testing.T) {
 	if err != nil {
 		t.Errorf("pinging %s: %v", url, err)
 	}
-	fmt.Println(res)
+	fmt.Printf("\n%s", res)
 
 }

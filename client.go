@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"net"
+	"time"
 )
 
 // Varint is documented at https://wiki.vg/Protocol#VarInt_and_VarLong
 // It's a littlendian byte slice constructed of 7-bit groups with the MSB indicating continuation
 
 const maxVarintBytes = 5
+const timeOutSeconds = 10
 
 type Varint struct{ value []byte }
 
@@ -25,6 +28,20 @@ func NewVarint(input int32) *Varint {
 	}
 	buf[n] = byte(x)
 	return &Varint{buf[0 : n+1]}
+}
+
+// ReadVarint consumes a io.Reader, parsing input until a valid Varint is completed
+func ReadVarint(input io.Reader) *Varint {
+	r := bufio.NewReader(input) // Wrap the Reader to ensure it has the ByteRead() method
+	var n int
+	var buf [maxVarintBytes]byte
+	for n = 0; n < maxVarintBytes; n++ {
+		buf[n], _ = r.ReadByte()
+		if buf[n]|0b10000000 == 0 { // Loop until the final value which has MSB unset
+			break
+		}
+	}
+	return &Varint{buf[0:n]}
 }
 
 // ToVar updates an existing Varint with a new value converted from fixed
@@ -105,20 +122,21 @@ func Ping(url string) (res string, err error) {
 		return "", fmt.Errorf("unable to connect to server %s: %v", url, err)
 	}
 
+	// Construct the handshake packet, per https://wiki.vg/Server_List_Ping
+
 	var payload bytes.Buffer
 	payload.Write(NewVarint(756).value)
 	payload.Write(NewMcstring("localhost").Tobytes())
 	payload.Write([]byte{0x63, 0xDD}) // server port, uint16(25565)
 	payload.Write(NewVarint(1).value)
-	fmt.Printf("%x", payload)
-
 	handshakePacket := NewPacket(0, payload.Bytes())
+
+	// and send it to the server, followed by a simple "Request" packet
 
 	_, err = conn.Write(handshakePacket.ToBytes())
 	if err != nil {
 		return "", fmt.Errorf("unable to send handshake: %v", err)
 	}
-
 	_, err = conn.Write([]byte{1, 0}) // "Request" packet is trivial to construct directly
 	if err != nil {
 		return "", fmt.Errorf("unable to send Request: %v", err)
@@ -132,9 +150,40 @@ func Ping(url string) (res string, err error) {
 	   		}
 	   		fmt.Printf("\n%d bytes written of %d ping", n, len(pingPacket.ToBytes())) */
 
-	// Get the response
+	// Get the response. Start by reading the packet-length, which should be a Varint followed by a 0 (ID)
+	// Todo: generalise this to read any MC Protocol packet and extract function
 
-	var msgData []byte
+	r := bufio.NewReader(conn)
+	header, err := r.ReadBytes(0) // Delimiter is packet ID == 0x00 which cannot appear in a Varint
+	if err != nil || len(header) < 1 || len(header) > 5 {
+		return "", fmt.Errorf("unable to read response packet header: %v", err)
+	}
+	header = header[:len(header)-1]
+	length, err := Varint{header}.ToInt()
+	if err != nil {
+		return "", fmt.Errorf("bad packet length: %v", err)
+	}
+	length-- // We have already read the packet ID having used it as a delimiter
+	if r.Buffered() > int(length+1) {
+		return "", fmt.Errorf("too much data: expecting packet length  %d, got %d", length+1, r.Buffered())
+	}
+	// wait for all the expected data to arrive
+	timeOut := time.Now().Add(time.Duration(timeOutSeconds * time.Second))
+	for r.Buffered() < int(length) && time.Now().Before(timeOut) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !time.Now().Before(timeOut) {
+		return "", fmt.Errorf("timed out waiting for response to complete")
+	}
+	response := make([]byte, length)
+	io.ReadFull(r, response)
+	if len(response) != int(length) {
+		panic(fmt.Errorf("response packet length doesn't match calculated length"))
+	}
+	fmt.Printf("%d\t%d", len(response), length)
+	response = response[len(response)-int(length):]
+
+	/*var msgData []byte
 	connbuf := bufio.NewReader(conn)
 	b, _ := connbuf.ReadByte() // Read the first byte and set the underlying buffer
 	if connbuf.Buffered() > 0 {
@@ -145,13 +194,13 @@ func Ping(url string) (res string, err error) {
 				msgData = append(msgData, b)
 			}
 		}
-	}
+	}*/
 
 	err = conn.Close()
 	if err != nil {
 		return "", fmt.Errorf("closing connection: %v", err)
 	}
-	res = string(msgData)
+	res = string(response)
 
 	return res, nil
 }
