@@ -27,17 +27,25 @@ func TestVarInt(t *testing.T) {
 		{fixed: -2147483648, variable: []byte{0x80, 0x80, 0x80, 0x80, 0x08}},
 	}
 	for _, row := range testTable {
-
 		// Test constructor of Varint given fixed value
 		v := NewVarint(row.fixed)
 		if !bytes.Equal(v.value, row.variable) {
 			t.Errorf("expected %x for NewVarint but got %x for %d", row.variable, v.value, row.fixed)
 		}
+		if v.length != len(row.variable) {
+			t.Errorf("Varint length stored as %d, but should be %d", v.length, len(row.variable))
+		}
 
 		// Test constructor of Varint given byte stream
-		v = ReadVarint(bytes.NewReader(row.variable))
+		v, err := ReadVarint(bytes.NewReader(row.variable))
+		if err != nil {
+			t.Errorf("error reading Varint bytes: %v", err)
+		}
 		if !bytes.Equal(v.value, row.variable) {
 			t.Errorf("expected %x for NewVarint but got %x for %d", row.variable, v.value, row.fixed)
+		}
+		if (v.length) != len(row.variable) {
+			t.Errorf("Varint length stored as %d, but should be %d", v.length, len(row.variable))
 		}
 
 		// Test conversion of Varint to fixed int value
@@ -68,6 +76,8 @@ func TestVarInt(t *testing.T) {
 	}
 
 	// Test Ping
+
+	//	fmt.Println("\nTesting ping")
 	url := "13.40.28.10:25565"
 	//	url := "localhost:25565"
 	res, err := Ping(url)

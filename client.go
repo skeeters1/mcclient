@@ -15,7 +15,10 @@ import (
 const maxVarintBytes = 5
 const timeOutSeconds = 10
 
-type Varint struct{ value []byte }
+type Varint struct {
+	value  []byte
+	length int
+}
 
 // Constructor: New converts from int32 to Variant
 func NewVarint(input int32) *Varint {
@@ -27,21 +30,26 @@ func NewVarint(input int32) *Varint {
 		x >>= 7                                  // shift the input throwing away the 7 bits we just packed
 	}
 	buf[n] = byte(x)
-	return &Varint{buf[0 : n+1]}
+	return &Varint{buf[0 : n+1], n + 1}
 }
 
 // ReadVarint consumes a io.Reader, parsing input until a valid Varint is completed
-func ReadVarint(input io.Reader) *Varint {
+func ReadVarint(input io.Reader) (*Varint, error) {
 	r := bufio.NewReader(input) // Wrap the Reader to ensure it has the ByteRead() method
 	var n int
 	var buf [maxVarintBytes]byte
 	for n = 0; n < maxVarintBytes; n++ {
-		buf[n], _ = r.ReadByte()
-		if buf[n]|0b10000000 == 0 { // Loop until the final value which has MSB unset
+		var err error
+		buf[n], err = r.ReadByte()
+		if err != nil { // This will include EOF, which shouldn't happen in the middle of a Varint
+			return nil, fmt.Errorf("error reading varint: %v", err)
+		}
+		if buf[n]&0b10000000 == 0 { // Loop until the final value which has MSB unset
 			break
 		}
 	}
-	return &Varint{buf[0:n]}
+	n++
+	return &Varint{buf[0:n], n}, nil
 }
 
 // ToVar updates an existing Varint with a new value converted from fixed
@@ -154,19 +162,40 @@ func Ping(url string) (res string, err error) {
 	// Todo: generalise this to read any MC Protocol packet and extract function
 
 	r := bufio.NewReader(conn)
-	header, err := r.ReadBytes(0) // Delimiter is packet ID == 0x00 which cannot appear in a Varint
-	if err != nil || len(header) < 1 || len(header) > 5 {
-		return "", fmt.Errorf("unable to read response packet header: %v", err)
-	}
-	header = header[:len(header)-1]
-	length, err := Varint{header}.ToInt()
+	pktlenVarint, err := ReadVarint(r)
 	if err != nil {
-		return "", fmt.Errorf("bad packet length: %v", err)
+		return "", err
 	}
-	length-- // We have already read the packet ID having used it as a delimiter
-	if r.Buffered() > int(length+1) {
-		return "", fmt.Errorf("too much data: expecting packet length  %d, got %d", length+1, r.Buffered())
+	length, err := pktlenVarint.ToInt()
+	if err != nil {
+		return "", err
 	}
+
+	if r.Buffered() > int(length) {
+		return "", fmt.Errorf("too much data: expecting packet length  %d, got %d", length, r.Buffered())
+	}
+
+	p, err := ReadVarint(r)
+	if err != nil {
+		return "", fmt.Errorf("couldn't read Varint packet ID %v: %v", p, err)
+	}
+	packetId, err := p.ToInt()
+	if err != nil {
+		return "", fmt.Errorf("couldn't unpack Varint packet ID %v: %v", p, err)
+	}
+	if packetId != 0 {
+		return "", fmt.Errorf("expected packet ID 0, but got %d", packetId)
+	}
+	s, err := ReadVarint(r)
+	if err != nil {
+		return "", fmt.Errorf("couldn't read Varint string length %v: %v", s, err)
+	}
+	length -= int32((p.length) + s.length)
+	strlength, err := s.ToInt()
+	if (err != nil) || (length != strlength) {
+		return "", fmt.Errorf("string length claims to be %d, but is %d", strlength, length)
+	}
+
 	// wait for all the expected data to arrive
 	timeOut := time.Now().Add(time.Duration(timeOutSeconds * time.Second))
 	for r.Buffered() < int(length) && time.Now().Before(timeOut) {
@@ -175,26 +204,12 @@ func Ping(url string) (res string, err error) {
 	if !time.Now().Before(timeOut) {
 		return "", fmt.Errorf("timed out waiting for response to complete")
 	}
+	// drain the buffer
 	response := make([]byte, length)
 	io.ReadFull(r, response)
 	if len(response) != int(length) {
 		panic(fmt.Errorf("response packet length doesn't match calculated length"))
 	}
-	fmt.Printf("%d\t%d", len(response), length)
-	response = response[len(response)-int(length):]
-
-	/*var msgData []byte
-	connbuf := bufio.NewReader(conn)
-	b, _ := connbuf.ReadByte() // Read the first byte and set the underlying buffer
-	if connbuf.Buffered() > 0 {
-		msgData = append(msgData, b)
-		for connbuf.Buffered() > 0 { // read byte by byte until the buffered data is empty
-			b, err := connbuf.ReadByte()
-			if err == nil {
-				msgData = append(msgData, b)
-			}
-		}
-	}*/
 
 	err = conn.Close()
 	if err != nil {
