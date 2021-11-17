@@ -66,7 +66,8 @@ func TestVarInt(t *testing.T) {
 	}
 
 	// Test Ping
-	url := "18.132.35.45:25565"
+	url := "13.40.28.10:25565"
+	//	url := "localhost:25565"
 	res, err := Ping(url)
 	if err != nil {
 		t.Errorf("pinging %s: %v", url, err)

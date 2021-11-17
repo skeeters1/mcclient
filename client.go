@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"log"
 	"net"
 )
 
@@ -54,9 +53,6 @@ func (v Varint) ToInt() (x int32, err error) {
 	}
 	return 0, fmt.Errorf("couldn't unpack varint %v", v.value)
 }
-
-// Write
-//func (v Varint) Write(n int, err error) {}
 
 type McString struct {
 	Length Varint
@@ -108,88 +104,54 @@ func Ping(url string) (res string, err error) {
 	if err != nil {
 		return "", fmt.Errorf("unable to connect to server %s: %v", url, err)
 	}
-	/*
-		version := NewVarint(756)
-		serverAddress := NewMcstring("localhost")
-		serverPort := []byte{0xDD, 0x63} // bigendian encoding of uint16(25565)
-		nextState := NewVarint(1)
 
-		fmt.Printf("\nversion: %v. server address: %v", version.value, serverAddress.Tobytes())
+	var payload bytes.Buffer
+	payload.Write(NewVarint(756).value)
+	payload.Write(NewMcstring("localhost").Tobytes())
+	payload.Write([]byte{0x63, 0xDD}) // server port, uint16(25565)
+	payload.Write(NewVarint(1).value)
+	fmt.Printf("%x", payload)
 
-		var buf bytes.Buffer
-		buf.Write(version.value)
-		buf.Write(serverAddress.Tobytes())
-		buf.Write(serverPort)
-		buf.Write(nextState.value)
-		fmt.Printf("%v", buf)
+	handshakePacket := NewPacket(0, payload.Bytes())
 
-		handshakePacket := NewPacket(0, buf.Bytes())
-		handshakeBytes := handshakePacket.ToBytes()
-		fmt.Printf("\nPacket:\t%v", handshakePacket)
-		fmt.Printf("\nAs bytes:\t%v", handshakeBytes)
-
-		n, err := conn.Write(handshakeBytes)
-		if err != nil {
-			return "", fmt.Errorf("unable to send handshake: %v", err)
-		}
-		fmt.Printf("\n%d bytes written of %d handshake", n, len(handshakeBytes))
-
-		n, err = conn.Write([]byte{1, 0}) // Send "Request" packet
-		if err != nil {
-			return "", fmt.Errorf("unable to send Request: %v", err)
-		}
-		fmt.Printf("\n%d bytes written of %d request", n, len([]byte{1, 0}))
-
-		pingPacket := NewPacket(1, []byte{8, 8, 8, 8, 8, 8, 8, 8})
-		n, err = conn.Write(pingPacket.ToBytes())
-		if err != nil {
-			return "", fmt.Errorf("unable to send ping: %v", err)
-		}
-		fmt.Printf("\n%d bytes written of %d ping", n, len(pingPacket.ToBytes()))
-	*/
-	msg := []byte{0xfe, 0x01, 0xfa}
-	n, err := conn.Write(msg)
+	_, err = conn.Write(handshakePacket.ToBytes())
 	if err != nil {
-		return "", fmt.Errorf("sending legacy ping: %v", err)
+		return "", fmt.Errorf("unable to send handshake: %v", err)
 	}
-	fmt.Printf("%d bytes legacy ping sent", n)
+
+	_, err = conn.Write([]byte{1, 0}) // "Request" packet is trivial to construct directly
+	if err != nil {
+		return "", fmt.Errorf("unable to send Request: %v", err)
+	}
+	/*
+	   // Notchian servers are said to require this ping packet before responding. But ours doesn't.
+	   		pingPacket := NewPacket(1, []byte{8, 8, 8, 8, 8, 8, 8, 8})
+	   		n, err = conn.Write(pingPacket.ToBytes())
+	   		if err != nil {
+	   			return "", fmt.Errorf("unable to send ping: %v", err)
+	   		}
+	   		fmt.Printf("\n%d bytes written of %d ping", n, len(pingPacket.ToBytes())) */
+
 	// Get the response
 
 	var msgData []byte
 	connbuf := bufio.NewReader(conn)
-	// Read the first byte and set the underlying buffer
-	b, _ := connbuf.ReadByte()
+	b, _ := connbuf.ReadByte() // Read the first byte and set the underlying buffer
 	if connbuf.Buffered() > 0 {
 		msgData = append(msgData, b)
-		for connbuf.Buffered() > 0 {
-			// read byte by byte until the buffered data is not empty
+		for connbuf.Buffered() > 0 { // read byte by byte until the buffered data is empty
 			b, err := connbuf.ReadByte()
 			if err == nil {
 				msgData = append(msgData, b)
-			} else {
-				log.Println("-------> unreadable character...", b)
 			}
 		}
 	}
-	fmt.Println(msgData)
-	/*
-		var response []byte
-		for {
-			n, err = conn.Read(response)
-			if err != nil {
-				return "", fmt.Errorf("reading response: %v", err)
-			}
-			if n > 0 {
-				fmt.Printf("%v", response)
-				break
-			}
-		} */
+
 	err = conn.Close()
 	if err != nil {
 		return "", fmt.Errorf("closing connection: %v", err)
 	}
 	res = string(msgData)
-	fmt.Printf("\n%d bytes received.\n%s", n, res)
 
 	return res, nil
 }
