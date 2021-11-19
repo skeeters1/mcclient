@@ -77,13 +77,14 @@ func TestVarInt(t *testing.T) {
 
 	// Test Ping
 
-	//	fmt.Println("\nTesting ping")
-	url := "13.40.28.10:25565"
+	fmt.Println("\nTesting ping")
+	url := "13.40.85.28:25565"
 	//	url := "localhost:25565"
 	res, err := Ping(url)
 	if err != nil {
 		t.Errorf("pinging %s: %v", url, err)
 	}
-	fmt.Printf("\n%s", res)
-
+	fmt.Printf("\nServer description: %s", res.Description.Text)
+	fmt.Printf("\nrunning Minecraft version %s", res.Version.Name)
+	fmt.Printf("\nwith %d out of possible %d players online\n", res.Players.Online, res.Players.Max)
 }

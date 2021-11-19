@@ -3,6 +3,7 @@ package mcclient
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -20,7 +21,7 @@ type Varint struct {
 	length int
 }
 
-// Constructor: New converts from int32 to Variant
+// NewVarint is a constructor which converts from int32 to Varint
 func NewVarint(input int32) *Varint {
 	var buf [maxVarintBytes]byte // buf is a blank buffer for the Varint
 	var n int
@@ -33,7 +34,7 @@ func NewVarint(input int32) *Varint {
 	return &Varint{buf[0 : n+1], n + 1}
 }
 
-// ReadVarint consumes a io.Reader, parsing input until a valid Varint is completed
+// ReadVarint is a constructor consuming an io.Reader until a valid Varint is completed
 func ReadVarint(input io.Reader) (*Varint, error) {
 	r := bufio.NewReader(input) // Wrap the Reader to ensure it has the ByteRead() method
 	var n int
@@ -52,7 +53,7 @@ func ReadVarint(input io.Reader) (*Varint, error) {
 	return &Varint{buf[0:n], n}, nil
 }
 
-// ToVar updates an existing Varint with a new value converted from fixed
+// FromInt updates an existing Varint with a new value converted from fixed int32
 func (v Varint) FromInt(input int32) {
 	var buf [maxVarintBytes]byte // buf is a blank buffer for the Varint
 	var n int
@@ -65,7 +66,7 @@ func (v Varint) FromInt(input int32) {
 	copy(v.value, buf[0:n+1])
 }
 
-// ToInt converts to fixed-width int32
+// ToInt converts Varint to fixed-width int32
 func (v Varint) ToInt() (x int32, err error) {
 	n := 0
 	for shift := uint(0); shift < 64; shift += 7 {
@@ -122,16 +123,10 @@ func (p Packet) ToBytes() []byte {
 	return buf.Bytes()
 }
 
-// Ping opens a session with the target server (url), sends a status request (serverping) and returns the JSON results
-func Ping(url string) (res string, err error) {
-
-	conn, err := net.Dial("tcp", url)
-	if err != nil {
-		return "", fmt.Errorf("unable to connect to server %s: %v", url, err)
-	}
+// Connect sends a handshake packet on the TCP socket conn
+func connect(conn net.Conn) error {
 
 	// Construct the handshake packet, per https://wiki.vg/Server_List_Ping
-
 	var payload bytes.Buffer
 	payload.Write(NewVarint(756).value)
 	payload.Write(NewMcstring("localhost").Tobytes())
@@ -140,14 +135,13 @@ func Ping(url string) (res string, err error) {
 	handshakePacket := NewPacket(0, payload.Bytes())
 
 	// and send it to the server, followed by a simple "Request" packet
-
-	_, err = conn.Write(handshakePacket.ToBytes())
+	_, err := conn.Write(handshakePacket.ToBytes())
 	if err != nil {
-		return "", fmt.Errorf("unable to send handshake: %v", err)
+		return fmt.Errorf("unable to send handshake: %v", err)
 	}
 	_, err = conn.Write([]byte{1, 0}) // "Request" packet is trivial to construct directly
 	if err != nil {
-		return "", fmt.Errorf("unable to send Request: %v", err)
+		return fmt.Errorf("unable to send Request: %v", err)
 	}
 	/*
 	   // Notchian servers are said to require this ping packet before responding. But ours doesn't.
@@ -157,10 +151,13 @@ func Ping(url string) (res string, err error) {
 	   			return "", fmt.Errorf("unable to send ping: %v", err)
 	   		}
 	   		fmt.Printf("\n%d bytes written of %d ping", n, len(pingPacket.ToBytes())) */
+	return nil
+}
 
-	// Get the response. Start by reading the packet-length, which should be a Varint followed by a 0 (ID)
-	// Todo: generalise this to read any MC Protocol packet and extract function
+// GetStatus waits for the server ping response, validates it and parses it into a string
+func getStatus(conn net.Conn) (res string, err error) {
 
+	// Start by reading the packet length and ID, which should be a Varint followed by a 0 (ID)
 	r := bufio.NewReader(conn)
 	pktlenVarint, err := ReadVarint(r)
 	if err != nil {
@@ -170,11 +167,9 @@ func Ping(url string) (res string, err error) {
 	if err != nil {
 		return "", err
 	}
-
 	if r.Buffered() > int(length) {
 		return "", fmt.Errorf("too much data: expecting packet length  %d, got %d", length, r.Buffered())
 	}
-
 	p, err := ReadVarint(r)
 	if err != nil {
 		return "", fmt.Errorf("couldn't read Varint packet ID %v: %v", p, err)
@@ -196,7 +191,7 @@ func Ping(url string) (res string, err error) {
 		return "", fmt.Errorf("string length claims to be %d, but is %d", strlength, length)
 	}
 
-	// wait for all the expected data to arrive
+	// Now we know how long the packet should be, wait for all the expected data to arrive
 	timeOut := time.Now().Add(time.Duration(timeOutSeconds * time.Second))
 	for r.Buffered() < int(length) && time.Now().Before(timeOut) {
 		time.Sleep(10 * time.Millisecond)
@@ -204,7 +199,7 @@ func Ping(url string) (res string, err error) {
 	if !time.Now().Before(timeOut) {
 		return "", fmt.Errorf("timed out waiting for response to complete")
 	}
-	// drain the buffer
+	// then drain the buffer into the string
 	response := make([]byte, length)
 	io.ReadFull(r, response)
 	if len(response) != int(length) {
@@ -216,6 +211,45 @@ func Ping(url string) (res string, err error) {
 		return "", fmt.Errorf("closing connection: %v", err)
 	}
 	res = string(response)
-
 	return res, nil
+}
+
+type ServerStatus struct {
+	Version struct {
+		Name     string `json:"name"`
+		Protocol int    `json:"protocol"`
+	} `json:"version"`
+	Players struct {
+		Max    int `json:"max"`
+		Online int `json:"online"`
+	} `json:"players"`
+	Description struct {
+		Text string `json:"text"`
+	} `json:"description"`
+}
+
+// Ping opens a session with the target server (url), sends a status request (serverping) and returns a pointer
+// to a ServerStatus struct containing the response
+func Ping(url string) (result *ServerStatus, err error) {
+
+	conn, err := net.DialTimeout("tcp", url, time.Second*timeOutSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("unable to connect to server %s: %v", url, err)
+	}
+
+	if connect(conn) != nil { // Connect at application layer by sending handshake request
+		return nil, fmt.Errorf("couldn't send handshake request: %v", err)
+	}
+
+	res, err := getStatus(conn)
+	if err != nil {
+		return nil, fmt.Errorf("error reading status: %v", err)
+
+	}
+	var status ServerStatus
+	err = json.Unmarshal([]byte(res), &status)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshalling JSON response: %v", err)
+	}
+	return &status, nil
 }
