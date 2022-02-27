@@ -197,7 +197,7 @@ func getStatus(conn net.Conn) (res string, err error) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !time.Now().Before(timeOut) {
-		return "", fmt.Errorf("timed out waiting for response to complete")
+		return "", fmt.Errorf("timed out waiting for response (%d bytes) to complete", int(length))
 	}
 	// then drain the buffer into the string
 	response := make([]byte, length)
