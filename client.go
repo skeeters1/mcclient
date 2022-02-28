@@ -191,19 +191,23 @@ func getStatus(conn net.Conn) (res string, err error) {
 		return "", fmt.Errorf("string length claims to be %d, but is %d", strlength, length)
 	}
 
-	// Now we know how long the packet should be, wait for all the expected data to arrive
-	timeOut := time.Now().Add(time.Duration(timeOutSeconds * time.Second))
-	for r.Buffered() < int(length) && time.Now().Before(timeOut) {
+	// Now read the rest of the packet, which might be in several chunks
+
+	buf := make([]byte, length)
+	var response []byte
+	bytesRead := 0
+
+	for len(response) < int(length) {
+		n, err := r.Read(buf)
+		if err != nil {
+			return "", fmt.Errorf("trying to read the response: %v", err)
+		}
+		response = append(response, buf[:n]...) // build up the response per chunk
+		bytesRead += n
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !time.Now().Before(timeOut) {
-		return "", fmt.Errorf("timed out waiting for response (%d bytes) to complete", int(length))
-	}
-	// then drain the buffer into the string
-	response := make([]byte, length)
-	io.ReadFull(r, response)
-	if len(response) != int(length) {
-		panic(fmt.Errorf("response packet length doesn't match calculated length"))
+	if !(len(response) == int(length) && len(response) == bytesRead) {
+		return "", fmt.Errorf("response packet length doesn't match calculated length")
 	}
 
 	err = conn.Close()

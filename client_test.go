@@ -78,7 +78,7 @@ func TestVarInt(t *testing.T) {
 	// Test Ping
 
 	fmt.Println("\nTesting ping")
-	url := "18.130.225.31:25565"
+	url := "java.skeets.co.uk:25565"
 	//	url := "localhost:25565"
 	res, err := Ping(url)
 	if err != nil {
