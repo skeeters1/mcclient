@@ -86,5 +86,11 @@ func TestVarInt(t *testing.T) {
 	}
 	fmt.Printf("\nServer description: %s", res.Description.Text)
 	fmt.Printf("\nrunning Minecraft version %s", res.Version.Name)
-	fmt.Printf("\nwith %d out of possible %d players online\n", res.Players.Online, res.Players.Max)
+	fmt.Printf("\nwith %d out of possible %d players online", res.Players.Online, res.Players.Max)
+	if res.Players.Online > 0 {
+		for _, player := range res.Players.SamplePlayers {
+			fmt.Printf("\nPlayer %s is logged in", player.Name)
+		}
+	}
+	fmt.Printf("\n\nFull response: %v\n", res)
 }

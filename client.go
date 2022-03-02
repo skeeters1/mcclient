@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"time"
 )
@@ -218,15 +219,21 @@ func getStatus(conn net.Conn) (res string, err error) {
 	return res, nil
 }
 
+type Player struct {
+	Id   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type ServerStatus struct {
 	Version struct {
 		Name     string `json:"name"`
 		Protocol int    `json:"protocol"`
 	} `json:"version"`
 	Players struct {
-		Max    int `json:"max"`
-		Online int `json:"online"`
-	} `json:"players"`
+		Max           int      `json:"max"`
+		Online        int      `json:"online"`
+		SamplePlayers []Player `json:"sample"`
+	}
 	Description struct {
 		Text string `json:"text"`
 	} `json:"description"`
@@ -235,7 +242,6 @@ type ServerStatus struct {
 // Ping opens a session with the target server (url), sends a status request (serverping) and returns a pointer
 // to a ServerStatus struct containing the response
 func Ping(url string) (result *ServerStatus, err error) {
-
 	conn, err := net.DialTimeout("tcp", url, time.Second*timeOutSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("unable to connect to server %s: %v", url, err)
@@ -250,6 +256,7 @@ func Ping(url string) (result *ServerStatus, err error) {
 		return nil, fmt.Errorf("error reading status: %v", err)
 
 	}
+	log.Println(res)
 	var status ServerStatus
 	err = json.Unmarshal([]byte(res), &status)
 	if err != nil {
